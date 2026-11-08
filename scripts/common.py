@@ -5,11 +5,10 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
-MODEL = ROOT / "model"
+from config import CLIPS, MODEL, OUT, ROOT
+
 ONNX = MODEL / "onnx"
 VOICES = MODEL / "voice_styles"
-OUT = ROOT / "out"
 
 CFG = json.loads((ONNX / "tts.json").read_text())
 SAMPLE_RATE = CFG["ae"]["sample_rate"]                      # 44100

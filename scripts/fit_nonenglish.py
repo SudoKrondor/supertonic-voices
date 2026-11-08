@@ -19,8 +19,8 @@ import time
 from pathlib import Path
 
 from batch_fit import ITERS, PY, SCRIPTS, cast, fitted
-from common import OUT, ROOT
-from step5_fit_kokoro import clip_lang
+from cast import clip_lang
+from config import CLIPS, OUT, ROOT
 
 ESSAYS = ROOT / "data" / "essays"
 LANG_BY_PREFIX = {"ES_": "es", "FR_": "fr", "HI_": "hi", "IT_": "it", "PT_": "pt"}
@@ -36,7 +36,7 @@ def lang_of(voice: str) -> str | None:
 
 def move_aside(voice: str) -> None:
     """Keep the English-fitted attempt for comparison instead of deleting it."""
-    for live, kept in [(ROOT / "data" / "kokoro" / voice, ROOT / "data" / "kokoro" / f"{voice}_en"),
+    for live, kept in [(CLIPS / voice, CLIPS / f"{voice}_en"),
                        (OUT / "step5" / voice, OUT / "step5" / f"{voice}_en")]:
         if live.exists():
             shutil.rmtree(kept, ignore_errors=True)

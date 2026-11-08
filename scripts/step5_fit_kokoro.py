@@ -1,40 +1,42 @@
-"""Step 5: fit a Supertonic voice to a Kokoro voice from clips made by make_kokoro_clips.py.
+"""Step 5: fit a Supertonic voice to a target voice from its clips.
 
-Timbre (speaker similarity, average pitch, spectrum) is fitted to Kokoro. Liveliness is not:
+The clips come from make_kokoro_clips.py (a Kokoro voice) or prepare_clips.py (any recordings).
+Timbre (speaker similarity, average pitch, spectrum) is fitted to the target. Liveliness is not:
 Kokoro sounds more machine-like than Supertonic, so instead of copying its pitch range we keep
 pitch movement at least as high as the starting preset's. (BELLA was fitted with an earlier rule,
 "the liveliest preset of the same gender", 0.42 against F1's 0.35; she ended at 0.44 either way.)
 
-    .venv/bin/python scripts/step5_fit_kokoro.py VOICE [ITERS] [OUT_DIR]
+    .venv/bin/python scripts/step5_fit_kokoro.py VOICE [ITERS] [OUT_DIR] [--gender m|f]
+
+The fit starts only from presets of the voice's gender: from --gender, else data/kokoro/<VOICE>/gender.txt,
+else the Kokoro cast. With none of those it may start from either gender, and can end up the wrong one.
 
 Reads data/kokoro/<VOICE>/clips.tsv. Writes <OUT_DIR>/<VOICE>.json (default out/step5/<VOICE>)
 and eval/ WAVs to listen to:
-  NNNN_kokoro / NNNN_start / NNNN_fitted   held-out essay clips: the original, nearest preset, fitted
-  <lang>_start / <lang>_fitted             test sentences in EN, IT, RU, UK (Kokoro has no reference)
+  NNNN_target / NNNN_start / NNNN_fitted   held-out clips: the original, nearest preset, fitted
+  <lang>_start / <lang>_fitted             test sentences in EN, IT, RU, UK (no reference to compare)
 """
 
+import argparse
 import shutil
-import sys
 from pathlib import Path
 
 import soundfile as sf
 import torch
 
-from common import OUT, ROOT, SAMPLE_RATE
+import cast
+from cast import clip_lang
+from common import CLIPS, OUT, SAMPLE_RATE
 from fitting import PRESETS, Fitter
 from step4_recover_f2 import HELD_OUT, save_voice
 
 N_EVAL_CLIPS = 6
 
 
-def clip_lang(voice: str) -> str:
-    """The language the clips were spoken in; clips made before lang.txt existed are English."""
-    path = ROOT / "data" / "kokoro" / voice / "lang.txt"
-    return path.read_text().strip() if path.exists() else "en"
-
-
 def load_clips(voice: str):
-    root = ROOT / "data" / "kokoro" / voice
+    root = CLIPS / voice
+    if not (root / "clips.tsv").exists():
+        raise SystemExit(f"no clips for {voice}: make {root / 'clips.tsv'} with prepare_clips.py or make_kokoro_clips.py")
     rows = [line.split("\t") for line in (root / "clips.tsv").read_text(encoding="utf-8").splitlines()[1:] if line]
     clips = {"train": [], "heldout": []}
     for name, split, _, text in rows:
@@ -43,7 +45,7 @@ def load_clips(voice: str):
     return root, clips
 
 
-def main(voice: str, iters: int = 400, out_dir: str | None = None) -> None:
+def main(voice: str, iters: int = 400, out_dir: str | None = None, gender: str | None = None) -> None:
     iters = int(iters)
     out = Path(out_dir) if out_dir else OUT / "step5" / voice
     (out / "eval").mkdir(parents=True, exist_ok=True)
@@ -57,10 +59,11 @@ def main(voice: str, iters: int = 400, out_dir: str | None = None) -> None:
     print(f"\npresets ranked by distance to {voice}:")
     print(f"  {'':<4}{'loss':>6} {'sim':>6} {'pitch':>7} {'spectrum':>9} {'movement':>9}")
     # Start only from presets of the voice's own gender: the loss alone picked F5 for ERIC and
-    # GEORGE, and both came out female. (Imported here: batch_fit imports this module.)
-    from batch_fit import cast
-    male = {v[0]: v[2] for v in cast()}.get(voice)
-    other = () if male is None else tuple(p for p in PRESETS if p.startswith("F" if male else "M"))
+    # GEORGE, and both came out female.
+    g = (gender or cast.gender(voice) or "").lower() or None
+    if g is None:
+        print(f"  WARNING: gender of {voice} unknown (pass --gender m|f); starting from either gender")
+    other = () if g is None else tuple(p for p in PRESETS if p.startswith("F" if g == "m" else "M"))
     ranking = fit.rank_presets(tg, exclude=other)
     for name, s in ranking:
         print(f"  {name:<4}{s['loss']:>6.2f} {s['sim']:>6.3f} {s['hz']:>5.0f}Hz {s['spectrum']:>9.3f} {s['movement']:>9.3f}")
@@ -68,13 +71,13 @@ def main(voice: str, iters: int = 400, out_dir: str | None = None) -> None:
     # Never flatter than where we start. (Not "the liveliest preset": on deep male voices the pitch
     # tracker wobbles, which inflates "movement" - M5 measures 1.04 against 0.32-0.42 for the females.)
     fit.liveliness = start_scores["movement"]
-    print(f"  {voice} (Kokoro) pitch movement {tg.movement.item():.3f}; "
+    print(f"  {voice} (target) pitch movement {tg.movement.item():.3f}; "
           f"keeping fitted voice at >= {fit.liveliness:.3f} ({start}, the starting preset)")
 
     ttl_s, dp_s = fit.preset(start)
     print(f"\nstarting from {start}; fine-tuning {iters} iterations")
     ttl_f, dp_f = fit.fine_tune(tg, ttl_s, dp_s, iters=iters)
-    save_voice(out / f"{voice}.json", ttl_f, dp_f, f"fitted to Kokoro {voice}, starting from {start}")
+    save_voice(out / f"{voice}.json", ttl_f, dp_f, f"fitted to {voice}, starting from {start}")
     print(f"\nsaved {out / f'{voice}.json'}")
 
     print(f"\non training clips, fresh noise:{'sim':>10} {'pitch':>7} {'spectrum':>9} {'movement':>9}")
@@ -86,7 +89,7 @@ def main(voice: str, iters: int = 400, out_dir: str | None = None) -> None:
     with torch.no_grad():
         for i, (name, text, _, _) in enumerate(clips["heldout"][:N_EVAL_CLIPS]):
             stem = Path(name).stem
-            shutil.copy(root / "wavs" / name, out / "eval" / f"{stem}_kokoro.wav")
+            shutil.copy(root / "wavs" / name, out / "eval" / f"{stem}_target.wav")
             row = []
             for label, ttl, dp in [("start", ttl_s, dp_s), ("fitted", ttl_f, dp_f)]:
                 wav = fit.speak(text, lang, ttl, dp, seed=777 + i)
@@ -101,4 +104,10 @@ def main(voice: str, iters: int = 400, out_dir: str | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:])
+    ap = argparse.ArgumentParser(description="Fit a Supertonic voice to the clips in data/kokoro/<VOICE>.")
+    ap.add_argument("voice")
+    ap.add_argument("iters", nargs="?", type=int, default=400)
+    ap.add_argument("out_dir", nargs="?")
+    ap.add_argument("--gender", choices=["m", "f"], help="the target voice's gender; picks the starting presets")
+    a = ap.parse_args()
+    main(a.voice, a.iters, a.out_dir, a.gender)

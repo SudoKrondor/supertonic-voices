@@ -2,9 +2,9 @@
 
 The app runs the int8 Supertonic model through sherpa-onnx 1.13.8 with 10 flow steps and
 speed 0.85; the fitting used the full-precision model at 5 steps and speed 1.05. This builds a
-test model folder (links to the app's int8 files + a voice.bin with the fitted voices appended
-after F1-M5), renders with the app's settings, and scores each render against the Kokoro voice.
-The app's own files are only read.
+test model folder (links to the int8 files + a voice.bin with the fitted voices appended
+after F1-M5), renders with the app's settings, and scores each render against the target clips.
+The int8 model folder (config.INT8_MODEL, or SUPERTONIC_INT8_DIR) is only read.
 
     .venv/bin/python scripts/check_int8.py VOICE [VOICE ...]
 """
@@ -20,12 +20,13 @@ import torch
 import torchaudio.functional as AF
 
 import voicebin
+from cast import clip_lang
 from common import OUT, SAMPLE_RATE
+from config import INT8_MODEL
 from speaker import SpeakerEncoder
 from step4_recover_f2 import HELD_OUT
 from step5_fit_kokoro import N_EVAL_CLIPS, load_clips
 
-APP_MODEL = Path.home() / "projects/EliteIntel/distribution/tts/sherpa-onnx-supertonic-3-tts-int8-2026-05-11"
 APP_STEPS = 10      # SupertonicTTS.NUM_STEPS
 APP_SPEED = 0.85    # SupertonicTTS.SPEED_MULTIPLIER at the commander's default speed 1.0
 FIRST_NEW_SID = 10
@@ -34,23 +35,20 @@ FIRST_NEW_SID = 10
 def build_model_dir(out: Path, voices: list[str]) -> Path:
     model = out / "model"
     model.mkdir(parents=True, exist_ok=True)
-    for f in APP_MODEL.iterdir():
+    if not INT8_MODEL.is_dir():
+        raise SystemExit(f"int8 model not found in {INT8_MODEL}; set SUPERTONIC_INT8_DIR")
+    for f in INT8_MODEL.iterdir():
         link = model / f.name
         if f.name != "voice.bin" and not link.exists():
             link.symlink_to(f)
-    ttl, dp = voicebin.read(APP_MODEL / "voice.bin")
+    # Only the 10 presets: the folder may hold a packed voice.bin already, and the fitted voices must
+    # land at FIRST_NEW_SID onwards.
+    ttl, dp = voicebin.upstream_presets(INT8_MODEL / "voice.bin")
     for v in voices:
-        t, d = load_voice_json(OUT / "step5" / v / f"{v}.json")
+        t, d = voicebin.load_voice_json(OUT / "step5" / v / f"{v}.json")
         ttl, dp = np.concatenate([ttl, t]), np.concatenate([dp, d])
     voicebin.write(model / "voice.bin", ttl, dp)
     return model
-
-
-def load_voice_json(path: Path):
-    import json
-    d = json.loads(path.read_text())
-    return (np.array(d["style_ttl"]["data"], dtype=np.float32).reshape(d["style_ttl"]["dims"]),
-            np.array(d["style_dp"]["data"], dtype=np.float32).reshape(d["style_dp"]["dims"]))
 
 
 def app_tts(model: Path) -> sherpa_onnx.OfflineTts:
@@ -85,18 +83,19 @@ def main(*voices: str) -> None:
     for k, voice in enumerate(voices):
         sid = FIRST_NEW_SID + k
         root, clips = load_clips(voice)
+        lang = clip_lang(voice)
         with torch.no_grad():
             centroid = torch.nn.functional.normalize(
                 torch.stack([emb(w.numpy(), sr) for _, _, w, sr in clips["train"]]).mean(0), dim=-1)
-            print(f"{voice} as app speaker id {sid}; similarity to Kokoro {voice}:")
+            print(f"{voice} as app speaker id {sid}; similarity to the {voice} clips:")
             print(f"  {'clip':<6}{'F1 in app':>10}{'fitted, fp32 5-step':>21}{'fitted in app':>15}")
             scores = []
             for i, (name, text, _, _) in enumerate(clips["heldout"][:N_EVAL_CLIPS]):
                 stem = Path(name).stem
-                shutil.copy(root / "wavs" / name, out / "eval" / f"{voice}_{stem}_kokoro.wav")
+                shutil.copy(root / "wavs" / name, out / "eval" / f"{voice}_{stem}_target.wav")
                 row = []
                 for label, s in [("F1_app", 0), (f"{voice}_app", sid)]:
-                    wav, sr = speak(tts, text, s, "en")
+                    wav, sr = speak(tts, text, s, lang)
                     sf.write(out / "eval" / f"{voice}_{stem}_{label}.wav", wav, sr)
                     row.append(float(emb(wav, sr) @ centroid))
                 fp32, sr = sf.read(OUT / "step5" / voice / "eval" / f"{stem}_fitted.wav", dtype="float32")

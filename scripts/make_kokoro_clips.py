@@ -7,6 +7,9 @@ speaks clause by clause, but a training clip must be whole sentences with their 
 
     .venv/bin/python scripts/make_kokoro_clips.py VOICE SID ESSAY.txt [LANG]
 
+Needs the Kokoro model at config.KOKORO_DIR (or KOKORO_MODEL_DIR). SID is the Kokoro speaker id; the
+cast's ids are in voices/kokoro_cast.tsv.
+
 Writes data/kokoro/<VOICE>/wavs/NNNN.wav and data/kokoro/<VOICE>/clips.tsv
 (file, split, seconds, text); split is "train" or "heldout" (every 10th clip). LANG is a
 Supertonic language code (en, es, fr, it, pt, hi; default en) and is saved as lang.txt.
@@ -21,9 +24,7 @@ import numpy as np
 import sherpa_onnx
 import soundfile as sf
 
-from common import ROOT
-
-KOKORO_DIR = Path.home() / "projects/EliteIntel/distribution/tts/kokoro-multi-lang-v1_0"
+from config import CLIPS, KOKORO_DIR, ROOT
 WORDS_PER_SECOND = 2.6          # rough Kokoro pace, only used to group sentences
 MIN_S, MAX_S = 5.0, 15.0
 HELDOUT_EVERY = 10
@@ -77,7 +78,9 @@ def chunks(sents: list[str]) -> list[str]:
 
 
 def main(voice: str, sid: str, essay: str, lang: str = "en") -> None:
-    out = ROOT / "data" / "kokoro" / voice
+    if not (KOKORO_DIR / "model.onnx").exists():
+        raise SystemExit(f"Kokoro model not found in {KOKORO_DIR}; set KOKORO_MODEL_DIR")
+    out = CLIPS / voice
     (out / "wavs").mkdir(parents=True, exist_ok=True)
     texts = chunks(sentences(Path(essay).read_text(encoding="utf-8")))
     # The fit has to encode the same text in the same language, so record it beside the clips.

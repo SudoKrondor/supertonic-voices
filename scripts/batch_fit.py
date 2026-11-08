@@ -1,10 +1,12 @@
-"""Fit every voice in Elite Intel's Kokoro cast, then pack them into one voice.bin.
+"""Fit every voice in Elite Intel's Kokoro cast (voices/kokoro_cast.tsv), then pack them into one voice.bin.
+
+Needs the Kokoro model (config.KOKORO_DIR) to make the clips.
 
 Resumable: a voice whose clips.tsv exists is not regenerated, and one whose fitted JSON exists
 is not refitted, so rerunning after an interruption picks up where it stopped. Clip generation
 (CPU) for the next voice runs while the current one fits (GPU).
 
-    .venv/bin/python scripts/batch_fit.py ESSAY.txt [VOICE ...]     # default: the whole enabled cast, in its order
+    .venv/bin/python scripts/batch_fit.py ESSAY.txt [VOICE ...]     # default: the whole cast, in its order
 
 Writes out/batch/voice.bin (F1-M5 as ids 0-9, then the fitted voices), out/batch/voices.tsv
 (id, voice, start preset, similarity before/after) and out/batch/enum.txt with suggested
@@ -20,25 +22,18 @@ from pathlib import Path
 import numpy as np
 
 import voicebin
-from check_int8 import APP_MODEL, load_voice_json
-from common import OUT, ROOT
+from cast import kokoro_cast as cast
+from config import CLIPS, OUT, ROOT, UPSTREAM_VOICE_BIN
 
-KOKORO_ENUM = Path.home() / "projects/EliteIntel/app/src/main/java/elite/intel/ai/mouth/kokoro/KokoroVoices.java"
-PY = str(ROOT / ".venv" / "bin" / "python")
+PY = sys.executable
+
 SCRIPTS = ROOT / "scripts"
 ITERS = 400
 FIRST_SID = 10
 
 
-def cast() -> list[tuple[str, int, bool, str, str]]:
-    """Enabled (not commented-out) entries: (name, sid, male, display name, description)."""
-    pat = re.compile(r'^\s+([A-Z_]+)\((\d+),\s*(true|false),\s*"([^"]*)",\s*"([^"]*)"\)')
-    return [(m[1], int(m[2]), m[3] == "true", m[4], m[5])
-            for line in KOKORO_ENUM.read_text().splitlines() if (m := pat.match(line))]
-
-
 def clips_ready(voice: str) -> bool:
-    return (ROOT / "data" / "kokoro" / voice / "clips.tsv").exists()
+    return (CLIPS / voice / "clips.tsv").exists()
 
 
 def fitted(voice: str) -> Path:
@@ -99,10 +94,10 @@ def main(essay: str, *only: str) -> None:
 def pack(done) -> None:
     """voice.bin with the shipped presets first, then every fitted voice. BELLA keeps id 10 if present."""
     done = sorted(done, key=lambda v: (v[0] != "BELLA", v[1]))
-    ttl, dp = voicebin.read(APP_MODEL / "voice.bin")
+    ttl, dp = voicebin.upstream_presets(UPSTREAM_VOICE_BIN)
     rows, enum = ["id\tvoice\tstart\tsim_start\tsim_fitted"], []
     for k, (voice, _, male, display, desc) in enumerate(done):
-        t, d = load_voice_json(fitted(voice))
+        t, d = voicebin.load_voice_json(fitted(voice))
         ttl, dp = np.concatenate([ttl, t]), np.concatenate([dp, d])
         start, before, after = summary(voice)
         rows.append(f"{FIRST_SID + k}\t{voice}\t{start}\t{before:.2f}\t{after:.2f}")

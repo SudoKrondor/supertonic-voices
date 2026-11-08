@@ -1,1 +1,5 @@
 model/
+.venv/
+data/
+out/
+__pycache__/

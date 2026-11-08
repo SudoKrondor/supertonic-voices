@@ -7,28 +7,28 @@ filler, so the ids after it don't shift.
 
     .venv/bin/python scripts/pack_release.py
 
+Elite Intel only: reads the enum at config.SUPERTONIC_ENUM (or SUPERTONIC_ENUM). For any other app,
+pack_voices.py takes the voices in order on the command line instead.
+
 Writes out/release/voice.bin. Nothing in the app is touched; copy it there yourself.
 """
 
 import re
 import sys
-from pathlib import Path
 
 import numpy as np
 
 import voicebin
-from check_int8 import load_voice_json
-from common import OUT
-
-ENUM = Path.home() / "projects/EliteIntel/app/src/main/java/elite/intel/ai/mouth/supertonic/SupertonicVoices.java"
-ORIGINAL = OUT / "voice_bin_backup" / "voice.bin.original"
-PRESETS = ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"]
+from config import OUT, SUPERTONIC_ENUM as ENUM, UPSTREAM_VOICE_BIN
+from voicebin import PRESETS, load_voice_json
 
 
 def enum_voices() -> dict[int, str]:
     """sid -> enum name, for the entries that are not commented out."""
     pat = re.compile(r'^\s+([A-Z_0-9]+)\((\d+),\s*(?:true|false),')
     voices = {}
+    if not ENUM.exists():
+        sys.exit(f"{ENUM} not found; set ELITE_INTEL_DIR or SUPERTONIC_ENUM (or use pack_voices.py)")
     for line in ENUM.read_text().splitlines():
         if m := pat.match(line):
             sid, name = int(m[2]), m[1]
@@ -39,7 +39,7 @@ def enum_voices() -> dict[int, str]:
 
 def main() -> None:
     voices = enum_voices()
-    ttl0, dp0 = voicebin.read(ORIGINAL)
+    ttl0, dp0 = voicebin.upstream_presets(UPSTREAM_VOICE_BIN)
     for sid, name in enumerate(PRESETS):
         assert voices.get(sid) == name, f"enum sid {sid} should be {name}, is {voices.get(sid)}"
 
