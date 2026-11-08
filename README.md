@@ -37,7 +37,9 @@ The recipe they settled on lives in `fitting.py`.
 
 - Linux and an NVIDIA GPU with CUDA. A fit takes about 50 minutes per voice on an RTX 3090
   (400 iterations).
-- Python 3.13
+  A fit needs most of a 24 GB card. If something else holds GPU memory (an LLM app, a game) and the fit
+  runs out, set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` or close the other app.
+- Python 3.14 (3.13 works too)
 - git-lfs, to download the model
 
 ## Setup

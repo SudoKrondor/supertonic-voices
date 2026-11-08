@@ -1,4 +1,4 @@
-# Versions the current Elite Intel release was built with (Python 3.13, CUDA GPU).
+# Tested on Python 3.14 (the Elite Intel release was built on 3.13 with the same versions). Needs a CUDA GPU.
 torch==2.14.1
 torchaudio==2.11.0
 torchcrepe==0.0.24
